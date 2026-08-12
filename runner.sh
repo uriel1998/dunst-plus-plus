@@ -106,16 +106,29 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+chat_search_for_prior(){
+    #take in message and time.
+    #check cache file for message within TIME period of TIME
+    #return 0 (good) or 1 (error) or 99 (prior found)
+}
+
+chat_search_for_identifier(){
+    # take in identifiers
+    # search in ... config?  For identifier, tie to icon.
+    # maybe mechanically use the filesystem? Like using the bear thing with shasum to track individual items reproduciably.
+    #returns path of icon (generated or cached), failing that, returns nothing. Should be check on return to make sure a filepath was generated
+}
+resend_payload (){}
+
 ########################################################################
 # Main
 ########################################################################
-
+# positional initial commands
 # require_commands if needed?
 if [ "${1}" == "--loud" ];then
     LOUD=1
     shift
 fi
-
 
 case "$notification_appname" in
     gomuks|cinny|beeper|equibop)
