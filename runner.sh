@@ -118,7 +118,19 @@ chat_search_for_identifier(){
     # maybe mechanically use the filesystem? Like using the bear thing with shasum to track individual items reproduciably.
     #returns path of icon (generated or cached), failing that, returns nothing. Should be check on return to make sure a filepath was generated
 }
-resend_payload (){}
+
+generate_avatar(){
+    # I think just using the dicebear wrapper I made makes sense here.
+    # I'm not trying to standardize to VCards, or even search them.
+    # though we cuold probably use rg....and if they're synced.
+    # but this is real brittle and depends on several things being done correctly, so... yeah nah.
+}
+
+resend_payload (){
+    # take in all the needed parts of the message,
+    # resend with different header so it goes forward as we want.
+
+}
 
 ########################################################################
 # Main
