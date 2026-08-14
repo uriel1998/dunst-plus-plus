@@ -27,7 +27,7 @@ notification_icon=""
 notification_time=""
 MESSAGE_CACHE_FILE="${SCRIPT_DIR}/cache/messages"
 ICON_CACHE="${SCRIPT_DIR}/cache/icons"
-CONFIGSTORE="${SCRIPT_DIR}configstore"
+CONFIGSTORE="${SCRIPT_DIR}/configstore"
 HISTORY_TIME=300 #this is in seconds, not lines or entries.
 
 function loud() {
@@ -39,22 +39,27 @@ function loud() {
     fi
 }
 
+die() {
+    printf '%s\n' "$*" >&2
+    exit 1
+}
+
 # Built-in CLI help for normal users. Internal preview helper arguments are
 # intentionally omitted because they are implementation details.
 show_help() {
-  cat <<EOF
+  cat <<'EOF'
 Usage:
-  ${SCRIPT_NAME} [list-name]
-  ${SCRIPT_NAME} --help
+  runner.sh [appname] [summary] [body] [icon]
+  runner.sh --help
 
 enrich those notifications
 this is meant to be called from dunst.
 --help|-h  this.
 --loud     give extra feedback
 appname
-summary="${2}" # name  #may also include tags from discord
-body="${3}"  # message
-icon="${4}"  # the icon
+summary     display name, may include tags from chat clients
+body        message body
+icon        original icon path or name
 
 EOF
 }
@@ -82,9 +87,9 @@ function search_for_identifier(){
     local sha new_line
 
     if [[ -z "${CONFIGSTORE:-}" || ! -f "${CONFIGSTORE}" ]]; then
-        printf 'search_for_identifier: CONFIGSTORE does not exist: %s\n' \
-            "${CONFIGSTORE:-<unset>}" >&2
-        return 1
+        sha="$(generate_avatar "${identifier}")" || return 1
+        printf ':%s\n' "${sha}"
+        return 0
     fi
 
     while IFS= read -r line || [[ -n "${line}" ]]; do
@@ -118,8 +123,10 @@ function search_for_identifier(){
         #
 
         if [[ -f "${field2}" ]]; then
-            # Field 2 is a filename. Generate the avatar and obtain its SHA.
-            sha="$(generate_avatar "${field2}")" || return 1
+            # Field 2 is a bootstrap image path. Cache it under the identifier SHA.
+            sha="$(printf '%s\n' "${identifier}" | /usr/bin/shasum | awk '{print $1}')" || return 1
+            mkdir -p "${ICON_CACHE}"
+            cp "${field2}" "${ICON_CACHE}/${sha}.png" || return 1
 
             # Replace only this exact config line, preserving fields 1 and 3.
             new_line="${field1}:${sha}:${field3}"
@@ -151,8 +158,8 @@ function search_for_identifier(){
     # No existing identifier was found.
     # Generate a deterministic SHA from the identifier itself.
     #
-    sha="$(generate_avatar "${identifier}")"
-    printf '%s\n' "${sha}"
+    sha="$(generate_avatar "${identifier}")" || return 1
+    printf ':%s\n' "${sha}"
 
 }
 
@@ -167,31 +174,33 @@ function chat_search_for_prior(){
     local msg_to_test="${2}"
     local teststring=""
     local testtime=""
+    local nowtime=""
+
+    mkdir -p "$(dirname "${MESSAGE_CACHE_FILE}")"
+    touch "${MESSAGE_CACHE_FILE}"
+
     nowtime=$(date +%s)
-    if [ (( $nowtime - $testtime )) -lt $time_diff ];then
-    teststring=$(printf '%s' "${msg_to_test}" | shasum | awk '{print $1}')
-    if rg -i "${teststring}" "${MESSAGE_CACHE_FILE}" then
-        # if it's already in cache, check time.
-        testtime=$(awk -F ':' '{ print $1 }')
-            loud "[warn] found duplicate"
-            return 99
-        fi
-        # other one is stale and old, rewrite.
-        printf "%s:%s\n" "${nowtime}" "${msg_to_test}" >> "${MESSAGE_CACHE_FILE}"
-    else
-        #brand new day, write.
-        printf "%s:%s\n" "${nowtime}" "${msg_to_test}" >> "${MESSAGE_CACHE_FILE}"
+    teststring=$(printf '%s' "${msg_to_test}" | /usr/bin/shasum | awk '{print $1}')
+    testtime="$(awk -F ':' -v hash="${teststring}" '$2 == hash { ts=$1 } END { print ts }' "${MESSAGE_CACHE_FILE}")"
+
+    if [[ -n "${testtime}" ]] && (( nowtime - testtime < time_diff )); then
+        loud "[warn] found duplicate"
+        return 99
     fi
+
+    printf "%s:%s\n" "${nowtime}" "${teststring}" >> "${MESSAGE_CACHE_FILE}"
     return 0
 }
 
 function trim_history () {
     local tempfile=""
 
+    mkdir -p "$(dirname "${MESSAGE_CACHE_FILE}")"
+    touch "${MESSAGE_CACHE_FILE}"
     tempfile=$(mktemp)
     cp "${MESSAGE_CACHE_FILE}" "${tempfile}"
     tail -n 300 "${tempfile}" > "${MESSAGE_CACHE_FILE}"
-    rm "${tmpfile}"
+    rm -f "${tempfile}"
 }
 
 
@@ -201,9 +210,7 @@ function chat_apps(){
     local n_summary="${2}" # name  #may also include tags from discord
     local n_body="${3}"  # message
     local n_icon="${4}"  # the icon
-    local n_time=$(date +%s) #time of processing
     local result=""
-    local n_shasum=""
     local nl_icon=""
     local nl_name=""
     # this is where you could further customize treatment per app, etc for the action buttons for quick replies and all that.
@@ -211,26 +218,26 @@ function chat_apps(){
     # if not, do we have a non-generic icon?
     # substitute icon, name, appname (and such)
 
-    result=$(chat_search_for_prior "${n_body}" "$HISTORY_TIME"; echo "$?")
-
-    if [ $result -eq 0 ];then
+    if chat_search_for_prior "${HISTORY_TIME}" "${n_body}"; then
         #it is not a duplicate
         #is it from someone we already know?
         # this also generates missing avatars
         # this also converts icons to our shasum too
         result=$(search_for_identifier "${n_summary}")
-        if [ "${result}" != "" ];then
+        if [ -n "${result}" ];then
             IFS=: read -r nl_name nl_icon <<< "${result}"
             nl_icon="${ICON_CACHE}/${nl_icon}.png"
 
+            if [ -z "${nl_name}" ]; then
+                nl_name="${n_summary}"
+            fi
+
             # re-present to dunst with a different app name so it hits a different rule.
             notify-send -a visible-chat -i "${nl_icon}" "${nl_name}" "${n_body}"
+        fi
     else
         loud "[warn] it was a duplicate" #it *is* a duplicate
     fi
-
-
-
 }
 
 
@@ -247,11 +254,15 @@ function generate_avatar(){
     # I'm not trying to standardize to VCards, or even search them.
     # But that way if you pass the same information (or encode a username) it works
 
+    local seed=""
+    local api_style=""
+    local avatar_dir="${ICON_CACHE}"
+
     if [ "$#" -eq 0 ];then
-	       #no input given, get random
-           seed=$(tr -dc 'a-zA-Z0-9' < /dev/urandom | fold -w 32 | head | /usr/bin/shasum | awk '{print $1}' )
+           #no input given, get random
+           seed=$(tr -dc 'a-zA-Z0-9' < /dev/urandom | fold -w 32 | head -n 1 | /usr/bin/shasum | awk '{print $1}')
     else
-	       seed=$(printf "%s\n" "${@}" | /usr/bin/shasum | awk '{print $1}')
+           seed=$(printf "%s\n" "${@}" | /usr/bin/shasum | awk '{print $1}')
     fi
 
     mkdir -p "${avatar_dir}"
@@ -266,33 +277,28 @@ function generate_avatar(){
             api_style="critters"
         fi
 
-		if ! wget -q "https://api.dicebear.com/10.x/${api_style}/png?animationVariant=&backgroundColor=5e5c64,813d9c,613583,1c71d8,1a5fb4,26a269&backgroundColorAngle=-67&backgroundColorFillStops=2&size=512&seed=${seed}" -O "${avatar_dir}/${seed}.png"; then
+        if ! wget -q "https://api.dicebear.com/10.x/${api_style}/png?animationVariant=&backgroundColor=5e5c64,813d9c,613583,1c71d8,1a5fb4,26a269&backgroundColorAngle=-67&backgroundColorFillStops=2&size=512&seed=${seed}" -O "${avatar_dir}/${seed}.png"; then
             rm -f "${avatar_dir}/${seed}.png"
         fi
 
-    	# Okay, if that didn't work, then the local install with the robots one
+        # Okay, if that didn't work, then the local install with the robots one
 
-    	if [ ! -f "${avatar_dir}/${seed}.png" ];then
-    		if command -v dicebear >/dev/null 2>&1; then
-    			dicebear bottts "${avatar_dir}" --animationVariant --backgroundColor '5e5c64' '813d9c' '613583' '1c71d8' '1a5fb4' '26a269' --format png --seed "${seed}"
-    			# note the name needs to match
-    			mv "${avatar_dir}/bottts-0.png" "${avatar_dir}/${seed}.png"
-    		fi
-    	fi
+        if [ ! -f "${avatar_dir}/${seed}.png" ];then
+            if command -v dicebear >/dev/null 2>&1; then
+                dicebear bottts "${avatar_dir}" --animationVariant --backgroundColor '5e5c64' '813d9c' '613583' '1c71d8' '1a5fb4' '26a269' --format png --seed "${seed}"
+                # note the name needs to match
+                mv "${avatar_dir}/bottts-0.png" "${avatar_dir}/${seed}.png"
+            fi
+        fi
     fi
 
     if [ -f "${avatar_dir}/${seed}.png" ];then
-        # now if it was a filename, replace it inline with sed
+        printf '%s\n' "${seed}"
+        return 0
     fi
 
+    return 1
 }
-
-resend_payload (){
-    # take in all the needed parts of the message,
-    # resend with different header so it goes forward as we want.
-
-}
-
 
 ########################################################################
 # Main
@@ -300,15 +306,23 @@ resend_payload (){
 # positional initial commands
 # require_commands if needed?
 
-if [ "${1}" == "--help" ] || [ "${1}" == "-h" ];then
+if [ "${1-}" == "--help" ] || [ "${1-}" == "-h" ];then
     show_help
     exit 0
 fi
 
-if [ "${1}" == "--loud" ];then
+if [ "${1-}" == "--loud" ];then
     LOUD=1
     shift
 fi
+
+if [ "$#" -lt 4 ]; then
+    die "Usage: ${SCRIPT_NAME} [--loud] appname summary body icon"
+fi
+
+require_command notify-send
+require_command /usr/bin/shasum
+require_command wget
 
 # $1 is the appname from dunst before dunst called this.
 case "$1" in
