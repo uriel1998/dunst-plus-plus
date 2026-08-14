@@ -132,6 +132,14 @@ function is_phone_number() {
         clean_phone_number "$1" >/dev/null 2>&1
     }
 
+function pretty_phone_number() {
+        local cleaned="${1:-}"
+
+        [[ $# -eq 1 && "${cleaned}" =~ ^[0-9]{10}$ ]] || return 1
+
+        printf '(%s) %s-%s\n' "${cleaned:0:3}" "${cleaned:3:3}" "${cleaned:6:4}"
+    }
+
 
 function search_for_identifier(){
      # take in identifier
@@ -151,7 +159,8 @@ function search_for_identifier(){
     local sha new_line
     local compare_field1=""
     local compare_item=""
-    local emit_field1=""
+    local display_field1=""
+    local default_display_field1=""
 
     #standardize phone numbers
     # does the identifier look like a phone number?
@@ -162,12 +171,16 @@ function search_for_identifier(){
                 identifier=$(clean_phone_number "${identifier}")   # return canonical 10-digit version
             fi
         fi
+        default_display_field1="${identifier}"
+        if [[ "${identifier}" =~ ^[0-9]{10}$ ]]; then
+            default_display_field1="$(pretty_phone_number "${identifier}")"
+        fi
 
 
 
     if [[ -z "${CONFIGSTORE:-}" || ! -f "${CONFIGSTORE}" ]]; then
         sha="$(generate_avatar "${identifier}")" || return 1
-        printf '%s:%s\n' "${identifier}" "${sha}"
+        printf '%s:%s\n' "${display_field1}" "${sha}"
         return 0
     fi
 
@@ -177,11 +190,11 @@ function search_for_identifier(){
 
         IFS=: read -r field1 field2 field3 <<< "${line}"
         compare_field1="${field1}"
-        emit_field1="${field1}"
+        display_field1="${field1}"
 
         if is_phone_number "${field1}"; then
             compare_field1="$(clean_phone_number "${field1}")"
-            emit_field1="${compare_field1}"
+            display_field1="$(pretty_phone_number "${compare_field1}")"
         fi
 
         # Does identifier match field 1?
@@ -236,12 +249,12 @@ function search_for_identifier(){
 
             mv "${CONFIGSTORE}.tmp" "${CONFIGSTORE}" || return 1
 
-            printf '%s:%s\n' "${emit_field1}" "${sha}"
+            printf '%s:%s\n' "${display_field1}" "${sha}"
             return 0
         fi
 
         # Field 2 wasn't a filename, so assume it is already the SHA.
-        printf '%s:%s\n' "${emit_field1}" "${field2}"
+        printf '%s:%s\n' "${display_field1}" "${field2}"
         return 0
     done < "${CONFIGSTORE}"
 
@@ -250,7 +263,7 @@ function search_for_identifier(){
     # Generate a deterministic SHA from the identifier itself.
     #
     sha="$(generate_avatar "${identifier}")" || return 1
-    printf '%s:%s\n' "${identifier}" "${sha}"
+    printf '%s:%s\n' "${default_display_field1}" "${sha}"
 
 }
 
