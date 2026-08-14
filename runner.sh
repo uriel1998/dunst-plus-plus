@@ -48,18 +48,34 @@ die() {
 # intentionally omitted because they are implementation details.
 show_help() {
   cat <<'EOF'
-Usage:
-  runner.sh [appname] [summary] [body] [icon]
+Usage
+  runner.sh [--loud] appname summary body icon
   runner.sh --help
 
-enrich those notifications
-this is meant to be called from dunst.
---help|-h  this.
---loud     give extra feedback
-appname
-summary     display name, may include tags from chat clients
-body        message body
-icon        original icon path or name
+Description
+  Accept a notification payload, normalize sender identifiers, suppress
+  duplicates, and re-send the notification under the `visible-chat` app name.
+  This is intended to be called from a hidden dunst rule and then displayed
+  again by a second dunst rule.
+
+Arguments
+  appname    Original app name received from dunst.
+  summary    Sender or summary text.
+  body       Notification body.
+  icon       Original icon path or icon name.
+
+Options
+  --help, -h Show this help text and exit.
+  --loud     Emit diagnostic messages on stderr.
+
+Files
+  ./configstore      Optional identifier map in `name:value:aliases` format.
+  ./cache/messages   Duplicate cache keyed by normalized sender plus body hash.
+  ./cache/icons      Generated or converted icon cache.
+
+Examples
+  runner.sh gomuks "1-937-555-1212" "hello there" dialog-information
+  runner.sh --loud beeper "Alice" "test message" /path/to/icon.jpg
 
 EOF
 }
@@ -180,7 +196,7 @@ function search_for_identifier(){
 
     if [[ -z "${CONFIGSTORE:-}" || ! -f "${CONFIGSTORE}" ]]; then
         sha="$(generate_avatar "${identifier}")" || return 1
-        printf '%s:%s\n' "${display_field1}" "${sha}"
+        printf '%s:%s\n' "${default_display_field1}" "${sha}"
         return 0
     fi
 
