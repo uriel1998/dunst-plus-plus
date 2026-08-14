@@ -151,6 +151,7 @@ function search_for_identifier(){
     local sha new_line
     local compare_field1=""
     local compare_item=""
+    local emit_field1=""
 
     #standardize phone numbers
     # does the identifier look like a phone number?
@@ -166,7 +167,7 @@ function search_for_identifier(){
 
     if [[ -z "${CONFIGSTORE:-}" || ! -f "${CONFIGSTORE}" ]]; then
         sha="$(generate_avatar "${identifier}")" || return 1
-        printf ':%s\n' "${sha}"
+        printf '%s:%s\n' "${identifier}" "${sha}"
         return 0
     fi
 
@@ -176,9 +177,11 @@ function search_for_identifier(){
 
         IFS=: read -r field1 field2 field3 <<< "${line}"
         compare_field1="${field1}"
+        emit_field1="${field1}"
 
         if is_phone_number "${field1}"; then
             compare_field1="$(clean_phone_number "${field1}")"
+            emit_field1="${compare_field1}"
         fi
 
         # Does identifier match field 1?
@@ -233,12 +236,12 @@ function search_for_identifier(){
 
             mv "${CONFIGSTORE}.tmp" "${CONFIGSTORE}" || return 1
 
-            printf '%s:%s\n' "${field1}" "${sha}"
+            printf '%s:%s\n' "${emit_field1}" "${sha}"
             return 0
         fi
 
         # Field 2 wasn't a filename, so assume it is already the SHA.
-        printf '%s:%s\n' "${field1}" "${field2}"
+        printf '%s:%s\n' "${emit_field1}" "${field2}"
         return 0
     done < "${CONFIGSTORE}"
 
@@ -247,7 +250,7 @@ function search_for_identifier(){
     # Generate a deterministic SHA from the identifier itself.
     #
     sha="$(generate_avatar "${identifier}")" || return 1
-    printf ':%s\n' "${sha}"
+    printf '%s:%s\n' "${identifier}" "${sha}"
 
 }
 
