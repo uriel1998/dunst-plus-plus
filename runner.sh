@@ -149,14 +149,18 @@ function search_for_identifier(){
     local identifier="${1:?search_for_identifier: identifier required}"
     local line field1 field2 field3 item
     local sha new_line
+    local compare_field1=""
+    local compare_item=""
 
     #standardize phone numbers
     # does the identifier look like a phone number?
         # if so, pass it to standardize_phone
         # and then make that the identifier
-        is_phone_number "${identifier}"               # valid NANP number?
-        phone_needs_standardization "${identifier}"   # valid NANP AND not already 10 digits?
-        identifier=$(clean_phone_number "${identifier}")            # return canonical 10-digit version
+        if is_phone_number "${identifier}"; then               # valid NANP number?
+            if phone_needs_standardization "${identifier}"; then   # valid NANP AND not already 10 digits?
+                identifier=$(clean_phone_number "${identifier}")   # return canonical 10-digit version
+            fi
+        fi
 
 
 
@@ -171,9 +175,14 @@ function search_for_identifier(){
         [[ -z "${line}" || "${line}" == \#* ]] && continue
 
         IFS=: read -r field1 field2 field3 <<< "${line}"
+        compare_field1="${field1}"
+
+        if is_phone_number "${field1}"; then
+            compare_field1="$(clean_phone_number "${field1}")"
+        fi
 
         # Does identifier match field 1?
-        if [[ "${field1}" != "${identifier}" ]]; then
+        if [[ "${compare_field1}" != "${identifier}" ]]; then
             # If not, check each comma-separated alias in field 3.
             local matched=false
 
@@ -182,8 +191,13 @@ function search_for_identifier(){
                 # Trim leading/trailing whitespace.
                 item="${item#"${item%%[![:space:]]*}"}"
                 item="${item%"${item##*[![:space:]]}"}"
+                compare_item="${item}"
 
-                if [[ "${item}" == "${identifier}" ]]; then
+                if is_phone_number "${item}"; then
+                    compare_item="$(clean_phone_number "${item}")"
+                fi
+
+                if [[ "${compare_item}" == "${identifier}" ]]; then
                     matched=true
                     break
                 fi
