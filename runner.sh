@@ -113,7 +113,25 @@ function clean_phone_number() {
         # Always return the final 10 digits, stripping country code 1 if present.
         printf '%s\n' "${result: -10}"
     }
-    
+
+
+function phone_needs_standardization() {
+        local input="${1:-}"
+        local cleaned
+
+        [[ $# -eq 1 && -n "$input" ]] || return 1
+
+        # Must first be a valid NANP phone number.
+        cleaned="$(clean_phone_number "$input" 2>/dev/null)" || return 1
+
+        # Return success only if the original differs from canonical form.
+        [[ "$input" != "$cleaned" ]]
+    }
+
+function is_phone_number() {
+        clean_phone_number "$1" >/dev/null 2>&1
+    }
+
 
 function search_for_identifier(){
      # take in identifier
@@ -136,6 +154,10 @@ function search_for_identifier(){
     # does the identifier look like a phone number?
         # if so, pass it to standardize_phone
         # and then make that the identifier
+        is_phone_number "${identifier}"               # valid NANP number?
+        phone_needs_standardization "${identifier}"   # valid NANP AND not already 10 digits?
+        identifier=$(clean_phone_number "${identifier}")            # return canonical 10-digit version
+
 
 
     if [[ -z "${CONFIGSTORE:-}" || ! -f "${CONFIGSTORE}" ]]; then
