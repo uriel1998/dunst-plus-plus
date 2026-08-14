@@ -5,6 +5,7 @@ moon/
 cache/
 dpp.env
 dunstrc
+configstore
 
 # Local agent metadata
 .codex
