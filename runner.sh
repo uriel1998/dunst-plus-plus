@@ -28,7 +28,7 @@ notification_time=""
 MESSAGE_CACHE_FILE="${SCRIPT_DIR}/cache/messages"
 ICON_CACHE="${SCRIPT_DIR}/cache/icons"
 CONFIGSTORE="${SCRIPT_DIR}/configstore"
-HISTORY_TIME=300 #this is in seconds, not lines or entries.
+HISTORY_TIME=30 #this is in seconds, not lines or entries.
 
 function loud() {
 ##############################################################################
@@ -69,6 +69,52 @@ function require_command() {
     command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
 }
 
+copy_icon_as_png() {
+    local source_path="${1:?copy_icon_as_png: source path required}"
+    local dest_path="${2:?copy_icon_as_png: destination path required}"
+
+    if command -v magick >/dev/null 2>&1; then
+        magick "${source_path}" "${dest_path}"
+        return 0
+    fi
+
+    if command -v convert >/dev/null 2>&1; then
+        convert "${source_path}" "${dest_path}"
+        return 0
+    fi
+
+    die "Missing required command: magick or convert"
+}
+
+
+
+function clean_phone_number() {
+    # parse for standardization
+    # derived from https://www.kodikra.com/2026/04/phone-number-in-bash-complete-solution.html
+        local input="${1:-}"
+        local result
+        local correct_pattern='^1?[2-9][0-9]{2}[2-9][0-9]{6}$'
+
+        # Require exactly one non-empty argument.
+        if [[ $# -ne 1 || -z "$input" ]]; then
+            printf 'clean_phone_number: requires one phone number\n' >&2
+            return 1
+        fi
+
+        # Remove everything except digits.
+        result="${input//[^0-9]/}"
+
+        # Validate as NANP: optional leading 1, then NXX-NXX-XXXX.
+        if [[ ! "$result" =~ $correct_pattern ]]; then
+            printf 'clean_phone_number: invalid NANP number: %s\n' "$input" >&2
+            return 1
+        fi
+
+        # Always return the final 10 digits, stripping country code 1 if present.
+        printf '%s\n' "${result: -10}"
+    }
+    
+
 function search_for_identifier(){
      # take in identifier
     # search in ${CONFIGSTORE} (already defined)
@@ -85,6 +131,12 @@ function search_for_identifier(){
     local identifier="${1:?search_for_identifier: identifier required}"
     local line field1 field2 field3 item
     local sha new_line
+
+    #standardize phone numbers
+    # does the identifier look like a phone number?
+        # if so, pass it to standardize_phone
+        # and then make that the identifier
+
 
     if [[ -z "${CONFIGSTORE:-}" || ! -f "${CONFIGSTORE}" ]]; then
         sha="$(generate_avatar "${identifier}")" || return 1
@@ -126,7 +178,7 @@ function search_for_identifier(){
             # Field 2 is a bootstrap image path. Cache it under the identifier SHA.
             sha="$(printf '%s\n' "${identifier}" | /usr/bin/shasum | awk '{print $1}')" || return 1
             mkdir -p "${ICON_CACHE}"
-            cp "${field2}" "${ICON_CACHE}/${sha}.png" || return 1
+            copy_icon_as_png "${field2}" "${ICON_CACHE}/${sha}.png" || return 1
 
             # Replace only this exact config line, preserving fields 1 and 3.
             new_line="${field1}:${sha}:${field3}"
@@ -215,26 +267,23 @@ function chat_apps(){
     local nl_name=""
     # this is where you could further customize treatment per app, etc for the action buttons for quick replies and all that.
 
-    # if not, do we have a non-generic icon?
-    # substitute icon, name, appname (and such)
+    #is it from someone we already know?
+    # this also generates missing avatars
+    # this also converts icons to our shasum too
+    result=$(search_for_identifier "${n_summary}")
+    if [ -n "${result}" ];then
+        IFS=: read -r nl_name nl_icon <<< "${result}"
+        nl_icon="${ICON_CACHE}/${nl_icon}.png"
 
-    if chat_search_for_prior "${HISTORY_TIME}" "${n_body}"; then
-        #it is not a duplicate
-        #is it from someone we already know?
-        # this also generates missing avatars
-        # this also converts icons to our shasum too
-        result=$(search_for_identifier "${n_summary}")
-        if [ -n "${result}" ];then
-            IFS=: read -r nl_name nl_icon <<< "${result}"
-            nl_icon="${ICON_CACHE}/${nl_icon}.png"
-
-            if [ -z "${nl_name}" ]; then
-                nl_name="${n_summary}"
-            fi
-
-            # re-present to dunst with a different app name so it hits a different rule.
-            notify-send -a visible-chat -i "${nl_icon}" "${nl_name}" "${n_body}"
+        if [ -z "${nl_name}" ]; then
+            nl_name="${n_summary}"
         fi
+    fi
+    # Appending id after standarization to body, that way it's more robust duplicate detection without false hits
+    if chat_search_for_prior "${HISTORY_TIME}" "${nl_name}${n_body}"; then
+        #it is not a duplicate
+        # re-present to dunst with a different app name so it hits a different rule.
+        notify-send -a visible-chat -i "${nl_icon}" "${nl_name}" "${n_body}"
     else
         loud "[warn] it was a duplicate" #it *is* a duplicate
     fi
