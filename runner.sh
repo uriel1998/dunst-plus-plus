@@ -425,7 +425,6 @@ function chat_apps(){
 
 	# Pre-process for Profanity
 	# in message body:
-	# bunyip in dayton_pressure (win 2)\n🟨
 	# (id) in (channel) (channel_window)\nMessage follows
 			# OR:
 			# jid@example/resource (win 9)\nMessage follows
@@ -462,7 +461,8 @@ function chat_apps(){
 		fi
 	fi
 	
-	
+	# Now that it's standardized, I can use the message body for 
+	# looking for other conditions and alert modifications too
 
 	result=$(search_for_identifier "${n_summary}")
 	if [ -n "${result}" ];then
@@ -633,6 +633,7 @@ require_command wget
 # $1 is the appname from dunst before dunst called this.
 case "${1,,}" in
     gomuks|cinny|beeper|equibop|profanity|teams-for-linux)
+		printf "%s - %s - %s - %s - %s\n" "$(date +%s)" "${1}" "${2}" "${3}" "${4}" >> /home/steven/tmp/debugging_prosody.txt
         chat_apps "${1}" "${2}" "${3}" "${4}"
         ;;
     # could be from deliveries, or ringing or whatever.
