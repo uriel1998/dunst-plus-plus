@@ -511,12 +511,6 @@ function chat_apps(){
 }
 
 
-
-
-
-
-
-
 function generate_avatar(){
     # pass in the hash of whatever the identifier is.
 
@@ -595,8 +589,8 @@ require_command /usr/bin/shasum
 require_command wget
 
 # $1 is the appname from dunst before dunst called this.
-case "$1" in
-    gomuks|cinny|beeper|equibop|teams-for-linux)
+case "${1,,}" in
+    gomuks|cinny|beeper|equibop|profanity|teams-for-linux)
         chat_apps "${1}" "${2}" "${3}" "${4}"
         ;;
     # could be from deliveries, or ringing or whatever.
