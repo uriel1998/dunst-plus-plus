@@ -412,6 +412,7 @@ function chat_apps(){
     local nl_icon=""
     local nl_name=""
     local channel=""
+    local channel_window=""
     local priority=""
     local channel_whitelist=""
     local channel_yellowlist=""
@@ -421,7 +422,30 @@ function chat_apps(){
     local keywords_low=""
     local keywords_exclude=""
     # this is where you could further customize treatment per app, etc for the action buttons for quick replies and all that.
+	
+		if [ "${n_appname,,}" == "profanity" ];then
+			# Pre-process for Profanity
+			# in message body:
+			# bunyip in dayton_pressure (win 2)\n🟨
+			# (id) in (channel (channel_window)\nMessage follows
 
+
+		# Separate the header from everything after the first newline.
+		{
+			IFS= read -r header
+			IFS= read -r -d '' message || true
+		} <<< "${n_body}"
+
+			# Parse: ID in CHANNEL (CHANNEL_WINDOW)
+			if [[ "${header}" =~ ^(.+)[[:space:]]in[[:space:]](.+)[[:space:]]\(([^()]*)\)$ ]]; then
+				n_summary="${BASH_REMATCH[1]}"
+				channel="#${BASH_REMATCH[2]}"
+				channel_window="${BASH_REMATCH[3]}"
+				n_body="${message}"
+			else
+				loud "[warn] Could not parse Profanity header: ${header}"
+			fi
+		fi
     #is it from someone we already know?
     # this also generates missing avatars
     # this also converts icons to our shasum too
