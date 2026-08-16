@@ -156,6 +156,72 @@ function pretty_phone_number() {
         printf '(%s) %s-%s\n' "${cleaned:0:3}" "${cleaned:3:3}" "${cleaned:6:4}"
     }
 
+function normalize_notification_body() {
+        local input_body="${1:-}"
+
+        [[ $# -eq 1 ]] || return 1
+
+        if [[ "${input_body}" =~ ^image\.(jpg|jpeg|png|gif|webp|heic)$ ]]; then
+            printf 'Sent a picture\n'
+            return 0
+        fi
+
+        printf '%s\n' "${input_body}"
+    }
+
+function dpp_get_list() {
+        local key="${1:?dpp_get_list: key required}"
+        local env_file="${SCRIPT_DIR}/dpp.env"
+
+        [[ -f "${env_file}" ]] || return 0
+
+        awk -F ':' -v wanted="${key}" '
+            $1 == wanted {
+                sub(/^[^:]*:/, "", $0)
+                print $0
+                exit
+            }
+        ' "${env_file}"
+    }
+
+function csv_list_has_exact() {
+        local csv_list="${1:-}"
+        local wanted="${2:-}"
+        local item=""
+
+        [[ -n "${csv_list}" && -n "${wanted}" ]] || return 1
+
+        IFS=',' read -ra items <<< "${csv_list}"
+        for item in "${items[@]}"; do
+            item="${item#"${item%%[![:space:]]*}"}"
+            item="${item%"${item##*[![:space:]]}"}"
+            [[ "${item}" == "${wanted}" ]] && return 0
+        done
+
+        return 1
+    }
+
+function csv_list_has_substring_ci() {
+        local csv_list="${1:-}"
+        local haystack="${2:-}"
+        local item=""
+        local lower_haystack=""
+        local lower_item=""
+
+        [[ -n "${csv_list}" && -n "${haystack}" ]] || return 1
+
+        lower_haystack="${haystack,,}"
+        IFS=',' read -ra items <<< "${csv_list}"
+        for item in "${items[@]}"; do
+            item="${item#"${item%%[![:space:]]*}"}"
+            item="${item%"${item##*[![:space:]]}"}"
+            lower_item="${item,,}"
+            [[ -n "${lower_item}" && "${lower_haystack}" == *"${lower_item}"* ]] && return 0
+        done
+
+        return 1
+    }
+
 
 function search_for_identifier(){
      # take in identifier
@@ -177,6 +243,12 @@ function search_for_identifier(){
     local compare_item=""
     local display_field1=""
     local default_display_field1=""
+    local match_identifier=""
+
+    # Strip gomuks-style room suffixes from summaries before matching.
+    if [[ "${identifier}" =~ ^(.*)\ \(#.*\)$ ]]; then
+        identifier="${BASH_REMATCH[1]}"
+    fi
 
     #standardize phone numbers
     # does the identifier look like a phone number?
@@ -187,9 +259,11 @@ function search_for_identifier(){
                 identifier=$(clean_phone_number "${identifier}")   # return canonical 10-digit version
             fi
         fi
+        match_identifier="${identifier,,}"
         default_display_field1="${identifier}"
         if [[ "${identifier}" =~ ^[0-9]{10}$ ]]; then
             default_display_field1="$(pretty_phone_number "${identifier}")"
+            match_identifier="${identifier}"
         fi
 
 
@@ -211,10 +285,12 @@ function search_for_identifier(){
         if is_phone_number "${field1}"; then
             compare_field1="$(clean_phone_number "${field1}")"
             display_field1="$(pretty_phone_number "${compare_field1}")"
+        else
+            compare_field1="${field1,,}"
         fi
 
         # Does identifier match field 1?
-        if [[ "${compare_field1}" != "${identifier}" ]]; then
+        if [[ "${compare_field1}" != "${match_identifier}" ]]; then
             # If not, check each comma-separated alias in field 3.
             local matched=false
 
@@ -227,9 +303,11 @@ function search_for_identifier(){
 
                 if is_phone_number "${item}"; then
                     compare_item="$(clean_phone_number "${item}")"
+                else
+                    compare_item="${item,,}"
                 fi
 
-                if [[ "${compare_item}" == "${identifier}" ]]; then
+                if [[ "${compare_item}" == "${match_identifier}" ]]; then
                     matched=true
                     break
                 fi
@@ -244,7 +322,7 @@ function search_for_identifier(){
 
         if [[ -f "${field2}" ]]; then
             # Field 2 is a bootstrap image path. Cache it under the identifier SHA.
-            sha="$(printf '%s\n' "${identifier}" | /usr/bin/shasum | awk '{print $1}')" || return 1
+            sha="$(printf '%s\n' "${field1}" | /usr/bin/shasum | awk '{print $1}')" || return 1
             mkdir -p "${ICON_CACHE}"
             copy_icon_as_png "${field2}" "${ICON_CACHE}/${sha}.png" || return 1
 
@@ -333,6 +411,15 @@ function chat_apps(){
     local result=""
     local nl_icon=""
     local nl_name=""
+    local channel=""
+    local priority=""
+    local channel_whitelist=""
+    local channel_yellowlist=""
+    local channel_redlist=""
+    local keywords_high=""
+    local keywords_med=""
+    local keywords_low=""
+    local keywords_exclude=""
     # this is where you could further customize treatment per app, etc for the action buttons for quick replies and all that.
 
     #is it from someone we already know?
@@ -347,11 +434,77 @@ function chat_apps(){
             nl_name="${n_summary}"
         fi
     fi
+    n_body="$(normalize_notification_body "${n_body}")"
+    
+    # Exclude list first.
+    keywords_exclude="$(dpp_get_list "keywords_exclude")"
+    if csv_list_has_substring_ci "${keywords_exclude}" "${n_body}"; then
+			priority="visible-chat-exclude"
+			loud "[info] Excluded keyword found."
+        return 0
+	fi
+    
+    # gomuks does not let us (at present) do sophisticated matching, so let's do it here.
+    # additional apps can be added here if needed if you solely wish to have this handle
+    # priorities and chat exclusions; this is taking care of a lack in gomuks
+    if [ "${n_appname}" == "gomuks" ];then
+        # examine against dpp.env
+        channel_whitelist="$(dpp_get_list "channel_whitelist")"
+        channel_yellowlist="$(dpp_get_list "channel_yellowlist")"
+        channel_redlist="$(dpp_get_list "channel_redlist")"
+        keywords_high="$(dpp_get_list "keywords_high")"
+        keywords_med="$(dpp_get_list "keywords_med")"
+        keywords_low="$(dpp_get_list "keywords_low")"
+
+        if [[ "${n_summary}" == *" (#"*")" ]]; then
+            channel="${n_summary##* (}"
+            channel="${channel%)}"
+        fi
+
+        # channel matches ARE case-sensitive
+        # channel white/yellow
+        # if channel matches whitelist, priority="visible-chat-high" continue to keyword matches
+        if csv_list_has_exact "${channel_whitelist}" "${channel}"; then
+            priority="visible-chat-high"
+        # if channel matches yellowlist, priority="visible-chat-med", continue to keyword matches
+        elif csv_list_has_exact "${channel_yellowlist}" "${channel}"; then
+            priority="visible-chat-med"
+        # if channel matches redlist, priority="visible-chat-low", continue to keyword matches
+        elif csv_list_has_exact "${channel_redlist}" "${channel}"; then
+            priority="visible-chat-low"
+        fi
+
+        # do keyword matching - keywords will overwrite priority, e.g. a redlist channel has a high priority keyword
+        # then it gets visible-chat-high
+        #keyword matches are case INsensitive.
+        # if n_body match a keyword_high, priority="visible-chat-high", continue to suppression check
+        if csv_list_has_substring_ci "${keywords_high}" "${n_body}"; then
+            priority="visible-chat-high"
+        # if n_body match a keyword_med, priority="visible-chat-med", continue to suppression check
+        elif csv_list_has_substring_ci "${keywords_med}" "${n_body}"; then
+            priority="visible-chat-med"
+        # if n_body match a keyword_low,priority="visible-chat-low",  continue to suppression check
+        elif csv_list_has_substring_ci "${keywords_low}" "${n_body}"; then
+            priority="visible-chat-low"
+        fi
+
+        # suppression check - if priority is unset by any of the above, then we don't want notifications.
+        #if [ "${priority}" =="" ];then
+        if [ -z "${priority}" ]; then
+            # suppress with loud "[info] Suppressing message from ${channel} without keyword."
+            loud "[info] Suppressing message from ${channel} without keyword."
+            return 0
+        fi
+    else
+        # not gomuks, so the above does not apply.
+        priority="visible-chat"
+    fi
     # Appending id after standarization to body, that way it's more robust duplicate detection without false hits
     if chat_search_for_prior "${HISTORY_TIME}" "${nl_name}${n_body}"; then
         #it is not a duplicate
         # re-present to dunst with a different app name so it hits a different rule.
-        notify-send -a visible-chat -i "${nl_icon}" "${nl_name}" "${n_body}"
+        loud "[info] Sending as ${priority}"
+        notify-send -a "${priority}" -i "${nl_icon}" "${nl_name} (${n_appname})" "${n_body}"
     else
         loud "[warn] it was a duplicate" #it *is* a duplicate
     fi
@@ -443,7 +596,7 @@ require_command wget
 
 # $1 is the appname from dunst before dunst called this.
 case "$1" in
-    gomuks|cinny|beeper|equibop)
+    gomuks|cinny|beeper|equibop|teams-for-linux)
         chat_apps "${1}" "${2}" "${3}" "${4}"
         ;;
     # could be from deliveries, or ringing or whatever.
