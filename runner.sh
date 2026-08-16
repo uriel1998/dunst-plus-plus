@@ -422,50 +422,68 @@ function chat_apps(){
     local keywords_low=""
     local keywords_exclude=""
     # this is where you could further customize treatment per app, etc for the action buttons for quick replies and all that.
-	
+
+	# Pre-process for Profanity
+	# in message body:
+	# bunyip in dayton_pressure (win 2)\n🟨
+	# (id) in (channel) (channel_window)\nMessage follows
+			# OR:
+			# jid@example/resource (win 9)\nMessage follows
 		if [ "${n_appname,,}" == "profanity" ];then
-			# Pre-process for Profanity
-			# in message body:
-			# bunyip in dayton_pressure (win 2)\n🟨
-			# (id) in (channel (channel_window)\nMessage follows
+			n_body="${n_body//\\n/$'\n'}"
+			if [[ "${n_body}" =~ ^Profanity[[:space:]]*$'\n' ]]; then
+				n_body="${n_body#*$'\n'}"
+			elif [[ "${n_body}" == $'Profanity\n'* ]]; then
+				n_body="${n_body#*$'\n'}"
+			fi
+			if [[ "${n_body}" != *$'\n'* ]] && [[ "${n_body}" =~ ^(.+[[:space:]]\([^()]*\))[[:space:]]+(.+)$ ]]; then
+				n_body="${BASH_REMATCH[1]}"$'\n'"${BASH_REMATCH[2]}"
+			fi
 
-
-		# Separate the header from everything after the first newline.
-		{
-			IFS= read -r header
-			IFS= read -r -d '' message || true
+			# Separate the header from everything after the first newline.
+			{
+				IFS= read -r header
+				IFS= read -r -d '' message || true
 		} <<< "${n_body}"
 
-			# Parse: ID in CHANNEL (CHANNEL_WINDOW)
-			if [[ "${header}" =~ ^(.+)[[:space:]]in[[:space:]](.+)[[:space:]]\(([^()]*)\)$ ]]; then
-				n_summary="${BASH_REMATCH[1]}"
-				channel="#${BASH_REMATCH[2]}"
-				channel_window="${BASH_REMATCH[3]}"
-				n_body="${message}"
-			else
-				loud "[warn] Could not parse Profanity header: ${header}"
-			fi
+		# Parse: ID in CHANNEL (CHANNEL_WINDOW)
+		if [[ "${header}" =~ ^(.+)[[:space:]]in[[:space:]](.+)[[:space:]]\(([^()]*)\)$ ]]; then
+			n_summary="${BASH_REMATCH[1]}"
+			channel="#${BASH_REMATCH[2]}"
+			channel_window="${BASH_REMATCH[3]}"
+			n_body="${message}"
+			# Parse direct-message style: ID (CHANNEL_WINDOW)
+		elif [[ "${header}" =~ ^(.+)[[:space:]]\(([^()]*)\)$ ]]; then
+			n_summary="${BASH_REMATCH[1]}"
+			channel_window="${BASH_REMATCH[2]}"
+			n_body="${message}"
+		else
+			loud "[warn] Could not parse Profanity header: ${header}"
 		fi
-    #is it from someone we already know?
-    # this also generates missing avatars
-    # this also converts icons to our shasum too
-    result=$(search_for_identifier "${n_summary}")
-    if [ -n "${result}" ];then
-        IFS=: read -r nl_name nl_icon <<< "${result}"
-        nl_icon="${ICON_CACHE}/${nl_icon}.png"
+	fi
+	
+	
 
-        if [ -z "${nl_name}" ]; then
-            nl_name="${n_summary}"
-        fi
-    fi
-    n_body="$(normalize_notification_body "${n_body}")"
-    
-    # Exclude list first.
-    keywords_exclude="$(dpp_get_list "keywords_exclude")"
-    if csv_list_has_substring_ci "${keywords_exclude}" "${n_body}"; then
-			priority="visible-chat-exclude"
-			loud "[info] Excluded keyword found."
-        return 0
+	result=$(search_for_identifier "${n_summary}")
+	if [ -n "${result}" ];then
+		IFS=: read -r nl_name nl_icon <<< "${result}"
+	nl_icon="${ICON_CACHE}/${nl_icon}.png"
+
+		if [ -z "${nl_name}" ]; then
+			nl_name="${n_summary}"
+		fi
+	fi
+	#is it from someone we already know?
+	# this also generates missing avatars
+	# this also converts icons to our shasum too
+	n_body="$(normalize_notification_body "${n_body}")"
+	
+	# Exclude list first.
+	keywords_exclude="$(dpp_get_list "keywords_exclude")"
+	if csv_list_has_substring_ci "${keywords_exclude}" "${n_body}"; then
+		priority="visible-chat-exclude"
+		loud "[info] Excluded keyword found."
+		return 0
 	fi
     
     # gomuks does not let us (at present) do sophisticated matching, so let's do it here.
@@ -485,50 +503,50 @@ function chat_apps(){
             channel="${channel%)}"
         fi
 
-        # channel matches ARE case-sensitive
-        # channel white/yellow
-        # if channel matches whitelist, priority="visible-chat-high" continue to keyword matches
-        if csv_list_has_exact "${channel_whitelist}" "${channel}"; then
-            priority="visible-chat-high"
-        # if channel matches yellowlist, priority="visible-chat-med", continue to keyword matches
-        elif csv_list_has_exact "${channel_yellowlist}" "${channel}"; then
-            priority="visible-chat-med"
-        # if channel matches redlist, priority="visible-chat-low", continue to keyword matches
-        elif csv_list_has_exact "${channel_redlist}" "${channel}"; then
-            priority="visible-chat-low"
-        fi
+	        # channel matches ARE case-sensitive
+	        # channel white/yellow
+	        if csv_list_has_exact "${channel_whitelist}" "${channel}"; then
+	            # if channel matches whitelist, priority="visible-chat-high" continue to keyword matches
+	            priority="visible-chat-high"
+	        elif csv_list_has_exact "${channel_yellowlist}" "${channel}"; then
+	            # if channel matches yellowlist, priority="visible-chat-med", continue to keyword matches
+	            priority="visible-chat-med"
+	        elif csv_list_has_exact "${channel_redlist}" "${channel}"; then
+	            # if channel matches redlist, priority="visible-chat-low", continue to keyword matches
+	            priority="visible-chat-low"
+	        fi
 
-        # do keyword matching - keywords will overwrite priority, e.g. a redlist channel has a high priority keyword
-        # then it gets visible-chat-high
-        #keyword matches are case INsensitive.
-        # if n_body match a keyword_high, priority="visible-chat-high", continue to suppression check
-        if csv_list_has_substring_ci "${keywords_high}" "${n_body}"; then
-            priority="visible-chat-high"
-        # if n_body match a keyword_med, priority="visible-chat-med", continue to suppression check
-        elif csv_list_has_substring_ci "${keywords_med}" "${n_body}"; then
-            priority="visible-chat-med"
-        # if n_body match a keyword_low,priority="visible-chat-low",  continue to suppression check
-        elif csv_list_has_substring_ci "${keywords_low}" "${n_body}"; then
-            priority="visible-chat-low"
-        fi
+	        # do keyword matching - keywords will overwrite priority, e.g. a redlist channel has a high priority keyword
+	        # then it gets visible-chat-high
+	        #keyword matches are case INsensitive.
+	        if csv_list_has_substring_ci "${keywords_high}" "${n_body}"; then
+	            # if n_body match a keyword_high, priority="visible-chat-high", continue to suppression check
+	            priority="visible-chat-high"
+	        elif csv_list_has_substring_ci "${keywords_med}" "${n_body}"; then
+	            # if n_body match a keyword_med, priority="visible-chat-med", continue to suppression check
+	            priority="visible-chat-med"
+	        elif csv_list_has_substring_ci "${keywords_low}" "${n_body}"; then
+	            # if n_body match a keyword_low,priority="visible-chat-low",  continue to suppression check
+	            priority="visible-chat-low"
+	        fi
 
-        # suppression check - if priority is unset by any of the above, then we don't want notifications.
-        #if [ "${priority}" =="" ];then
-        if [ -z "${priority}" ]; then
-            # suppress with loud "[info] Suppressing message from ${channel} without keyword."
-            loud "[info] Suppressing message from ${channel} without keyword."
-            return 0
-        fi
+	        # suppression check - if priority is unset by any of the above, then we don't want notifications.
+	        if [ -z "${priority}" ]; then
+	            #if [ "${priority}" =="" ];then
+	            # suppress with loud "[info] Suppressing message from ${channel} without keyword."
+	            loud "[info] Suppressing message from ${channel} without keyword."
+	            return 0
+	        fi
     else
         # not gomuks, so the above does not apply.
         priority="visible-chat"
     fi
-    # Appending id after standarization to body, that way it's more robust duplicate detection without false hits
-    if chat_search_for_prior "${HISTORY_TIME}" "${nl_name}${n_body}"; then
-        #it is not a duplicate
-        # re-present to dunst with a different app name so it hits a different rule.
-        loud "[info] Sending as ${priority}"
-        notify-send -a "${priority}" -i "${nl_icon}" "${nl_name} (${n_appname})" "${n_body}"
+	    if chat_search_for_prior "${HISTORY_TIME}" "${nl_name}${n_body}"; then
+	        # Appending id after standarization to body, that way it's more robust duplicate detection without false hits
+	        # re-present to dunst with a different app name so it hits a different rule.
+	        #it is not a duplicate
+	        loud "[info] Sending as ${priority}"
+	        notify-send -a "${priority}" -i "${nl_icon}" "${nl_name} (${n_appname})" "${n_body}"
     else
         loud "[warn] it was a duplicate" #it *is* a duplicate
     fi
