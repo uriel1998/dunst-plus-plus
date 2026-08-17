@@ -70,8 +70,14 @@ Options
 
 Files
   ./configstore      Optional identifier map in `name:value:aliases` format.
+  ./dpp.env          Optional channel, keyword, exclusion, and `sub:` rewrite rules.
   ./cache/messages   Duplicate cache keyed by normalized sender plus body hash.
   ./cache/icons      Generated or converted icon cache.
+
+`dpp.env` notes
+  `sub:replacement:pattern1,pattern2` rewrites the normalized body before
+  exclusion, routing, and duplicate checks. Prefix a pattern with `? ` to
+  treat it as a regex. Regex patterns cannot contain literal commas.
 
 Examples
   runner.sh gomuks "1-937-555-1212" "hello there" dialog-information
@@ -182,6 +188,73 @@ function dpp_get_list() {
                 exit
             }
         ' "${env_file}"
+    }
+
+function dpp_get_substitutions() {
+        local env_file="${SCRIPT_DIR}/dpp.env"
+
+        [[ -f "${env_file}" ]] || return 0
+
+        awk -F ':' '
+            $1 == "sub" {
+                sub(/^[^:]*:/, "", $0)
+                print $0
+            }
+        ' "${env_file}"
+    }
+
+function apply_regex_substitution() {
+        local input_text="${1:-}"
+        local regex="${2:-}"
+        local replacement="${3:-}"
+
+        [[ $# -eq 3 ]] || return 1
+
+        # Attachment rules in dpp.env are intended to replace filename tokens
+        # inside a sentence, not consume all preceding text on the line.
+        if [[ "${regex}" =~ ^\.\*\\\.(jpe?g|gif|png|webp)$ ]]; then
+            printf '%s\n' "${input_text}" | sed -E "s/[^,[:space:]]+\\.${BASH_REMATCH[1]}/${replacement}/gI"
+            return 0
+        fi
+
+        printf '%s\n' "${input_text}" | sed -E "s/${regex}/${replacement}/g"
+    }
+
+function apply_message_substitutions() {
+        local input_body="${1:-}"
+        local output_body=""
+        local rule=""
+        local replacement=""
+        local patterns_csv=""
+        local pattern=""
+        local regex=""
+
+        [[ $# -eq 1 ]] || return 1
+
+        output_body="${input_body}"
+
+        while IFS= read -r rule || [[ -n "${rule}" ]]; do
+            [[ -n "${rule}" ]] || continue
+
+            IFS=: read -r replacement patterns_csv <<< "${rule}"
+            [[ -n "${replacement}" && -n "${patterns_csv}" ]] || continue
+
+            IFS=',' read -ra patterns <<< "${patterns_csv}"
+            for pattern in "${patterns[@]}"; do
+                pattern="${pattern#"${pattern%%[![:space:]]*}"}"
+                pattern="${pattern%"${pattern##*[![:space:]]}"}"
+                [[ -n "${pattern}" ]] || continue
+
+                if [[ "${pattern}" == \?\ * ]]; then
+                    regex="${pattern#\? }"
+                    output_body="$(apply_regex_substitution "${output_body}" "${regex}" "${replacement}")"
+                else
+                    output_body="${output_body//"${pattern}"/"${replacement}"}"
+                fi
+            done
+        done < <(dpp_get_substitutions)
+
+        printf '%s\n' "${output_body}"
     }
 
 function csv_list_has_exact() {
@@ -460,6 +533,8 @@ function chat_apps(){
 			loud "[warn] Could not parse Profanity header: ${header}"
 		fi
 	fi
+	
+	n_body="$(apply_message_substitutions "${n_body}")"
 	
 	# Now that it's standardized, I can use the message body for 
 	# looking for other conditions and alert modifications too

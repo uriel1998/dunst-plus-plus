@@ -17,6 +17,7 @@ This is useful when the original notification source does not provide stable ico
 - Suppresses duplicate notifications within a short time window.
 - Applies channel- and keyword-based priority routing for `gomuks` using `dpp.env`.
 - Applies global exclusion keywords before re-sending any supported chat app.
+- Applies configurable message-body substitutions from `dpp.env`, including regex rules for attachment filenames.
 - Normalizes North American phone numbers before matching and duplicate checks.
 - Displays normalized phone numbers as `(555) 555-1212`.
 - Strips trailing ` (#channel-name)` room suffixes from summaries before identifier matching.
@@ -41,7 +42,7 @@ Optional:
 ## Files
 
 - `runner.sh`: main notification processing script.
-- `dpp.env`: channel, keyword, and exclusion routing rules.
+- `dpp.env`: channel, keyword, exclusion, and body substitution rules.
 - `configstore`: local mapping file used at runtime.
 - `configstore.example`: example mapping format.
 - `dunstrc.example`: example `dunst` configuration.
@@ -114,12 +115,19 @@ keywords_high:term one,term two
 keywords_med:term three
 keywords_low:term four,term five
 keywords_exclude:exact phrase,another phrase
+sub:replacement:plain substring,another substring
+sub:🖼:? [[:alnum:]_.-]+\.jpeg,? [[:alnum:]_.-]+\.jpg
 ```
 
 Behavior:
 
 - `keywords_exclude` is checked first for every supported chat app.
 - Exclude matching is case-insensitive substring matching.
+- Each `sub:` line rewrites the normalized message body before exclusion, routing, and duplicate checks.
+- `sub:` rules use `sub:replacement:pattern1,pattern2`.
+- Plain patterns are simple substring replacements.
+- Patterns prefixed with `? ` are treated as regex replacements.
+- Regex patterns must not contain literal commas because commas separate patterns within a single `sub:` line.
 - For `gomuks`, a trailing ` (#channel-name)` suffix is extracted from the summary and used for channel routing.
 - Channel list matches are case-sensitive and assign:
   - `visible-chat-high`
@@ -142,7 +150,7 @@ The duplicate key is built from:
 
 This is deliberate so that multiple clients carrying the same underlying message can collapse into one notification even if their raw sender formatting differs.
 
-Because body normalization happens before duplicate checks, `image.jpg` and `Sent a picture` can collapse into the same logical notification after rewrite.
+Because body normalization and `sub:` rewrites happen before duplicate checks, `image.jpg` and `Sent a picture` can collapse into the same logical notification after rewrite.
 
 ## Dunst Integration
 
