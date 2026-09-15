@@ -6,6 +6,7 @@ cache/
 dpp.env
 dunstrc
 configstore
+network-middle-manager.ini
 
 # Local agent metadata
 .codex
