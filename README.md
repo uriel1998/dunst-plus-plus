@@ -135,7 +135,8 @@ Behavior:
   - `visible-chat-low`
 - Keyword matches are case-insensitive substring matches on the body.
 - Keyword matches override the channel-derived priority.
-- If a `gomuks` notification matches neither a channel tier nor a keyword tier, it is suppressed.
+- If a `gomuks` channel notification matches neither a channel tier nor a keyword tier, it is suppressed.
+- Unmatched `gomuks` direct messages (summaries without a trailing ` (#channel-name)`) use `visible-chat` and pass through duplicate detection. Keyword exclusions still apply.
 - Non-`gomuks` notifications bypass the channel/keyword priority logic and are sent as plain `visible-chat`, unless excluded first.
 - Missing keys in `dpp.env` are treated as unconfigured tiers.
 
@@ -143,12 +144,16 @@ Behavior:
 
 Duplicates are tracked in `cache/messages`.
 
+After exclusion and routing checks, the first eligible notification passes through. Later notifications with the same duplicate key within 30 seconds are suppressed, regardless of which supported chat app sent them. The app name is not part of the key. Excluded messages and unmatched gomuks channel messages do not enter the duplicate cache.
+
 The duplicate key is built from:
 
 - normalized sender display identity
 - notification body
 
 This is deliberate so that multiple clients carrying the same underlying message can collapse into one notification even if their raw sender formatting differs.
+
+For example, a gomuks direct message from `Example Sender` with body `Hello there` is displayed as `visible-chat` without needing a keyword match. If Beeper then reports the same normalized sender and body within the duplicate window, that copy is suppressed. The same applies when Beeper arrives first.
 
 Because body normalization and `sub:` rewrites happen before duplicate checks, `image.jpg` and `Sent a picture` can collapse into the same logical notification after rewrite.
 
@@ -168,7 +173,7 @@ The hidden rule should suppress the original notification so only the rewritten 
 
 ## Notes
 
-- `runner.sh` currently routes only a fixed set of chat app names through `chat_apps()`: `gomuks`, `cinny`, `beeper`, `equibop`, and `teams-for-linux`.
+- `runner.sh` currently routes only a fixed set of chat app names through `chat_apps()`: `gomuks`, `cinny`, `beeper`, `equibop`, `profanity`, and `teams-for-linux`.
 - The duplicate window is controlled by `HISTORY_TIME` in `runner.sh`.
 - If neither online DiceBear nor local `dicebear` is available, fallback avatar generation will fail.
 

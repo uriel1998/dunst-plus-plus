@@ -79,6 +79,13 @@ Files
   exclusion, routing, and duplicate checks. Prefix a pattern with `? ` to
   treat it as a regex. Regex patterns cannot contain literal commas.
 
+Routing
+  Unmatched gomuks direct messages use `visible-chat`; unmatched gomuks
+  channel messages are suppressed. Keyword exclusions apply to all chat apps.
+  After filtering, the first eligible notification passes through; copies with
+  the same normalized sender and body within 30 seconds are suppressed across
+  supported chat apps.
+
 Examples
   runner.sh gomuks "1-937-555-1212" "hello there" dialog-information
   runner.sh --loud beeper "Alice" "test message" /path/to/icon.jpg
@@ -603,6 +610,11 @@ function chat_apps(){
 	        elif csv_list_has_substring_ci "${keywords_low}" "${n_body}"; then
 	            # if n_body match a keyword_low,priority="visible-chat-low",  continue to suppression check
 	            priority="visible-chat-low"
+	        fi
+
+	        # Direct messages without a keyword still go through duplicate detection.
+	        if [ -z "${priority}" ] && [ -z "${channel}" ]; then
+	            priority="visible-chat"
 	        fi
 
 	        # suppression check - if priority is unset by any of the above, then we don't want notifications.
